@@ -7,6 +7,10 @@ import 'package:synchronized/synchronized.dart';
 /// Represents a function that can stop an audio playing.
 typedef StopFunction = Future<void> Function();
 
+/// The duration to wait for the audio to buffer before stopping it.
+// ignore: constant_identifier_names
+const Duration _BUFFER_TIMEOUT_DURATION = Duration(milliseconds: 200);
+
 /// An AudioPool is a provider of AudioPlayers that are pre-loaded with an asset
 /// to minimize delays.
 ///
@@ -100,13 +104,16 @@ class AudioPool {
       await player.setVolume(volume);
       await player.resume();
 
-      late StreamSubscription<void> subscription;
+      final duration = await player.getDuration();
+      StreamSubscription<void>? subscription;
+      Timer? timeOutTimer;
 
       Future<void> stop() {
         return _lock.synchronized(() async {
           final removedPlayer = currentPlayers.remove(player.playerId);
           if (removedPlayer != null) {
-            subscription.cancel();
+            subscription?.cancel();
+            timeOutTimer?.cancel();
             await removedPlayer.stop();
             if (availablePlayers.length >= maxPlayers) {
               await removedPlayer.release();
@@ -118,7 +125,10 @@ class AudioPool {
       }
 
       subscription = player.onPlayerComplete.listen((_) => stop());
-
+      if (duration != null && player.state != PlayerState.completed) {
+        final timeoutDuration = duration + _BUFFER_TIMEOUT_DURATION;
+        timeOutTimer = Timer(timeoutDuration, stop);
+      }
       return stop;
     });
   }
